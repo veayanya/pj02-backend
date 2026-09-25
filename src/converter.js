@@ -302,16 +302,25 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
         await writeFile(outputPath, htmlDoc, "utf-8");
       }
     } else if (to === "html") {
-      if (bin.pandoc) {
-        await execAsync(`${bin.pandoc} "${inputPath}" -o "${outputPath}" --standalone`, { timeout: 60_000 });
-      } else {
+      if (bin.libreoffice) {
+        try {
+          await execAsync(
+            `${bin.libreoffice} --headless --infilter="writer_pdf_import" --convert-to html "${inputPath}" --outdir "${tmpDir}"`,
+            { timeout: 60_000 }
+          );
+        } catch (e) {
+          console.error("LibreOffice PDF -> HTML failed:", e);
+        }
+      }
+
+      if (!existsSync(outputPath)) {
         const pages = await extractPdfPagesText(buffer);
         const htmlDoc =
           `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${baseName}</title><style>body { font-family: system-ui, sans-serif; padding: 40px; line-height: 1.6; } .page { margin-bottom: 2rem; padding: 1.5rem; border: 1px solid #e5e7eb; border-radius: 8px; }</style></head><body>` +
           pages
             .map(
               (p, i) =>
-                `<div class="page"><h2>Page ${i + 1}</h2><p>${p
+                `<div class="page"><h2>Halaman ${i + 1}</h2><p>${p
                   .replace(/</g, "&lt;")
                   .replace(/>/g, "&gt;")
                   .replace(/\n/g, "<br>")}</p></div>`
@@ -321,10 +330,41 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
         await writeFile(outputPath, htmlDoc, "utf-8");
       }
     } else if (to === "epub") {
-      if (!bin.pandoc) {
-        throw new Error("Pandoc diperlukan untuk konversi PDF → EPUB. Silakan pasang Pandoc (https://pandoc.org).");
+      const tmpHtml = path.join(tmpDir, `${baseName}_tmp.html`);
+      if (bin.libreoffice) {
+        try {
+          await execAsync(
+            `${bin.libreoffice} --headless --infilter="writer_pdf_import" --convert-to html "${inputPath}" --outdir "${tmpDir}"`,
+            { timeout: 60_000 }
+          );
+          const loHtml = path.join(tmpDir, `${baseName}.html`);
+          if (existsSync(loHtml)) {
+            await rename(loHtml, tmpHtml);
+          }
+        } catch (e) {
+          console.error("LibreOffice PDF -> HTML (for EPUB) failed:", e);
+        }
       }
-      await execAsync(`${bin.pandoc} "${inputPath}" -o "${outputPath}"`, { timeout: 60_000 });
+
+      if (!existsSync(tmpHtml)) {
+        const pages = await extractPdfPagesText(buffer);
+        const htmlDoc =
+          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${baseName}</title></head><body>` +
+          pages
+            .map(
+              (p, i) =>
+                `<h2>Halaman ${i + 1}</h2><p>${p.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")}</p>`
+            )
+            .join("\n") +
+          `</body></html>`;
+        await writeFile(tmpHtml, htmlDoc, "utf-8");
+      }
+
+      if (bin.pandoc) {
+        await execAsync(`${bin.pandoc} "${tmpHtml}" -o "${outputPath}"`, { timeout: 60_000 });
+      } else {
+        await rename(tmpHtml, outputPath);
+      }
     }
   }
 
@@ -345,7 +385,14 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
         await convertDocxToPdfJS(buffer, outputPath);
       }
     } else if (to === "html") {
-      if (bin.pandoc) {
+      if (bin.libreoffice) {
+        try {
+          await execAsync(`${bin.libreoffice} --headless --convert-to html "${inputPath}" --outdir "${tmpDir}"`, { timeout: 60_000 });
+        } catch (e) {
+          console.log("LibreOffice DOCX->HTML failed, trying Pandoc/JS:", e);
+        }
+      }
+      if (!existsSync(outputPath) && bin.pandoc) {
         try {
           await execAsync(`${bin.pandoc} "${inputPath}" -o "${outputPath}" --standalone`, { timeout: 60_000 });
         } catch (e) {
@@ -356,13 +403,24 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
         await convertDocxToHtmlJS(buffer, outputPath);
       }
     } else if (to === "epub") {
-      if (bin.pandoc) {
+      const tmpHtml = path.join(tmpDir, `${baseName}_tmp.html`);
+      if (bin.libreoffice) {
+        try {
+          await execAsync(`${bin.libreoffice} --headless --convert-to html "${inputPath}" --outdir "${tmpDir}"`, { timeout: 60_000 });
+          const loHtml = path.join(tmpDir, `${baseName}.html`);
+          if (existsSync(loHtml)) {
+            await rename(loHtml, tmpHtml);
+          }
+        } catch (e) {
+          console.log("LibreOffice DOCX->HTML (for EPUB) failed:", e);
+        }
+      }
+      if (existsSync(tmpHtml) && bin.pandoc) {
+        await execAsync(`${bin.pandoc} "${tmpHtml}" -o "${outputPath}"`, { timeout: 60_000 });
+      } else if (bin.pandoc) {
         await execAsync(`${bin.pandoc} "${inputPath}" -o "${outputPath}"`, { timeout: 60_000 });
-      } else {
-        const htmlPath = path.join(tmpDir, `${baseName}.html`);
-        await convertDocxToHtmlJS(buffer, htmlPath);
-        const htmlContent = await readFile(htmlPath, "utf-8");
-        await writeFile(outputPath, htmlContent, "utf-8");
+      } else if (existsSync(tmpHtml)) {
+        await rename(tmpHtml, outputPath);
       }
     }
   }
@@ -404,9 +462,18 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
         await convertHtmlToPdfJS(buffer, outputPath);
       }
     } else if (to === "docx") {
-      if (bin.pandoc) {
+      if (bin.libreoffice) {
+        try {
+          await execAsync(`${bin.libreoffice} --headless --convert-to docx:writer_docx_Export "${inputPath}" --outdir "${tmpDir}"`, {
+            timeout: 60_000,
+          });
+        } catch (e) {
+          console.log("LibreOffice HTML->DOCX failed, trying Pandoc:", e);
+        }
+      }
+      if (!existsSync(outputPath) && bin.pandoc) {
         await execAsync(`${bin.pandoc} "${inputPath}" -o "${outputPath}" --from html`, { timeout: 60_000 });
-      } else {
+      } else if (!existsSync(outputPath)) {
         const content = buffer.toString("utf-8");
         await writeFile(outputPath, content, "utf-8");
       }
@@ -430,10 +497,26 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
         await rename(loOut, outputPath);
       }
     } else if (to === "docx") {
-      if (!bin.pandoc) {
-        throw new Error("Pandoc diperlukan untuk konversi EPUB → DOCX. Silakan pasang Pandoc (https://pandoc.org).");
+      const tmpHtml = path.join(tmpDir, `${baseName}_tmp.html`);
+      if (bin.pandoc) {
+        try {
+          await execAsync(`${bin.pandoc} "${inputPath}" -o "${tmpHtml}"`, { timeout: 60_000 });
+        } catch (e) {}
       }
-      await execAsync(`${bin.pandoc} "${inputPath}" -o "${outputPath}"`, { timeout: 60_000 });
+      if (existsSync(tmpHtml) && bin.libreoffice) {
+        try {
+          await execAsync(`${bin.libreoffice} --headless --convert-to docx:writer_docx_Export "${tmpHtml}" --outdir "${tmpDir}"`, {
+            timeout: 60_000,
+          });
+          const loDocx = path.join(tmpDir, `${baseName}_tmp.docx`);
+          if (existsSync(loDocx)) {
+            await rename(loDocx, outputPath);
+          }
+        } catch (e) {}
+      }
+      if (!existsSync(outputPath) && bin.pandoc) {
+        await execAsync(`${bin.pandoc} "${inputPath}" -o "${outputPath}"`, { timeout: 60_000 });
+      }
     }
   }
 
