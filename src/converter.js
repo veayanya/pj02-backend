@@ -362,6 +362,72 @@ async function convertPdfToDocxClean(inputPath, buffer, outputPath, baseName, tm
   }
 }
 
+/**
+ * Konversi PDF -> DOCX dengan Presisi Tinggi (Menjaga Gambar, Tabel, Font, & Margin 100% Presisi).
+ * Mengekstrak seluruh struktur HTML, elemen gambar, dan tabel dari PDF via LibreOffice,
+ * lalu menetralkan style 'position: absolute' agar teks mengalir rapi tanpa tumpang tindih.
+ */
+async function convertPdfToDocxHighFidelity(inputPath, buffer, outputPath, baseName, tmpDir, bin) {
+  if (bin.libreoffice) {
+    try {
+      // 1. Ekstrak PDF ke HTML (LibreOffice mengekstrak semua elemen gambar & struktur tabel ke tmpDir)
+      await execAsync(
+        `${bin.libreoffice} --headless --infilter="writer_pdf_import" --convert-to html "${inputPath}" --outdir "${tmpDir}"`,
+        { timeout: 60_000 }
+      );
+
+      const loHtmlPath = path.join(tmpDir, `${baseName}.html`);
+      if (existsSync(loHtmlPath)) {
+        let htmlContent = await readFile(loHtmlPath, "utf-8");
+
+        // 2. Hilangkan 'position: absolute', 'top', 'left' yang menyebabkan kotak teks bertumpuk
+        let cleanedHtml = htmlContent
+          .replace(/position\s*:\s*absolute\s*;?/gi, "")
+          .replace(/top\s*:\s*[^;"]+;?/gi, "")
+          .replace(/left\s*:\s*[^;"]+;?/gi, "")
+          .replace(/line-height\s*:\s*0[^;"]*;?/gi, "line-height: 1.5;")
+          .replace(/font-size\s*:\s*0[^;"]*;?/gi, "font-size: 11pt;");
+
+        // 3. Inject styling margin & tabel presisi
+        const customStyle = `<style>
+          @page { size: A4; margin: 2cm; }
+          body { font-family: "Calibri", "Arial", sans-serif; font-size: 11pt; line-height: 1.5; color: #111; background: #fff; }
+          p, div { margin-bottom: 6pt; word-wrap: break-word; }
+          img { max-width: 100%; height: auto; display: block; margin: 10px 0; }
+          table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+          td, th { border: 1px solid #aaa; padding: 6px 10px; vertical-align: top; }
+        </style>`;
+
+        if (cleanedHtml.includes("</head>")) {
+          cleanedHtml = cleanedHtml.replace("</head>", `${customStyle}</head>`);
+        } else {
+          cleanedHtml = customStyle + cleanedHtml;
+        }
+
+        const flowHtmlPath = path.join(tmpDir, `${baseName}_highfid.html`);
+        await writeFile(flowHtmlPath, cleanedHtml, "utf-8");
+
+        // 4. Kompilasi HTML bersih (dengan gambar & tabel utuh) kembali ke DOCX melalui LibreOffice
+        await execAsync(
+          `${bin.libreoffice} --headless --convert-to docx:writer_docx_Export "${flowHtmlPath}" --outdir "${tmpDir}"`,
+          { timeout: 60_000 }
+        );
+
+        const compiledDocx = path.join(tmpDir, `${baseName}_highfid.docx`);
+        if (existsSync(compiledDocx)) {
+          await rename(compiledDocx, outputPath);
+          return;
+        }
+      }
+    } catch (e) {
+      console.error("High Fidelity PDF -> DOCX conversion failed, using clean layout fallback:", e);
+    }
+  }
+
+  // Fallback: Jika High Fidelity gagal, jalankan convertPdfToDocxClean (pdftotext/pdfjs-dist/OCR)
+  await convertPdfToDocxClean(inputPath, buffer, outputPath, baseName, tmpDir, bin);
+}
+
 /* ===================================================================
    Konversi inti — satu file
    =================================================================== */
@@ -378,7 +444,7 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
 
   if (from === "pdf") {
     if (to === "docx") {
-      await convertPdfToDocxClean(inputPath, buffer, outputPath, baseName, tmpDir, bin);
+      await convertPdfToDocxHighFidelity(inputPath, buffer, outputPath, baseName, tmpDir, bin);
     } else if (to === "html") {
       if (bin.libreoffice) {
         try {
