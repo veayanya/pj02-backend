@@ -286,47 +286,228 @@ async function convertPdfToDocxClean(inputPath, buffer, outputPath, baseName, tm
     }
   }
 
-  // 4. Susun teks menjadi dokumen HTML mengalir yang rapi tanpa frame/box bertumpuk
+/**
+ * Rekonstruksi struktur dokumen resmi (Berita Acara, Formulir 1/2/3, Tabel, & Tanda Tangan)
+ * menjadi HTML mengalir dengan presisi tinggi untuk dikompilasi ke dokumen Native Word (.docx).
+ */
+function parsePdfTextToOfficialHtml(extractedText, baseName) {
   const lines = extractedText.split(/\r?\n/);
-  const formattedParagraphs = lines
-    .map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return "";
-      const escaped = trimmed
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
+  let html = [];
+  let inTable = false;
+  let tableRows = [];
 
-      if (
-        trimmed.length < 90 &&
-        (trimmed.toUpperCase() === trimmed ||
-          trimmed.startsWith("BAB ") ||
-          trimmed.includes("BERITA ACARA") ||
-          trimmed.includes("HASIL VERIFIKASI"))
+  const flushTable = () => {
+    if (tableRows.length > 0) {
+      html.push('<table style="width: 100%; border-collapse: collapse; margin-top: 10pt; margin-bottom: 15pt;" border="1">');
+
+      let isForm1 = tableRows.some((r) => r.includes("(1)") && r.includes("(6)"));
+
+      tableRows.forEach((row, idx) => {
+        const trimmed = row.trim();
+        if (!trimmed) return;
+
+        // Sub-header atau nomor kolom (1) (2) (3)...
+        if (trimmed.includes("(1)") && trimmed.includes("(2)")) {
+          html.push(`<tr style="background-color: #e6e6e6; text-align: center; font-weight: bold; font-size: 9pt;">
+            <td style="border: 1px solid #000; padding: 4px;">(1)</td>
+            <td style="border: 1px solid #000; padding: 4px;">(2)</td>
+            <td style="border: 1px solid #000; padding: 4px;">(3)</td>
+            <td style="border: 1px solid #000; padding: 4px;">(4)</td>
+            <td style="border: 1px solid #000; padding: 4px;">(5)</td>
+            <td style="border: 1px solid #000; padding: 4px;">(6)</td>
+          </tr>`);
+          return;
+        }
+
+        // Header Utama Tabel Formulir 1
+        if (idx === 0 && (trimmed.includes("Jenis Kegiatan") || trimmed.includes("Hasil Pengendalian"))) {
+          html.push(`<tr style="background-color: #f2f2f2; font-weight: bold; text-align: center;">
+            <th rowspan="2" style="border: 1px solid #000; padding: 6px; width: 5%;">No</th>
+            <th rowspan="2" style="border: 1px solid #000; padding: 6px; width: 35%;">Jenis Kegiatan</th>
+            <th colspan="2" style="border: 1px solid #000; padding: 6px; width: 20%;">Hasil Pengendalian dan Evaluasi</th>
+            <th rowspan="2" style="border: 1px solid #000; padding: 6px; width: 20%;">Faktor Penyebab Ketidaksesuaian</th>
+            <th rowspan="2" style="border: 1px solid #000; padding: 6px; width: 20%;">Tindak Lanjut Penyempurnaan Apabila Tidak</th>
+          </tr>
+          <tr style="background-color: #f2f2f2; font-weight: bold; text-align: center;">
+            <th style="border: 1px solid #000; padding: 4px; width: 10%;">Ada</th>
+            <th style="border: 1px solid #000; padding: 4px; width: 10%;">Tidak Ada</th>
+          </tr>`);
+          return;
+        }
+
+        // Baris data tabel biasa — pisahkan kolom berdasarkan tab / spasi 3x
+        const cells = row.split(/\t|\s{3,}/).map((c) => c.trim()).filter(Boolean);
+        if (cells.length >= 2) {
+          html.push("<tr>");
+          cells.forEach((cell, cIdx) => {
+            const widthAttr = cIdx === 0 ? 'width="5%" style="text-align: center;"' : 'style="text-align: left;"';
+            const escaped = cell.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            html.push(`<td ${widthAttr} style="border: 1px solid #000; padding: 6px 8px; vertical-align: top;">${escaped}</td>`);
+          });
+          html.push("</tr>");
+        } else {
+          const escaped = trimmed.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          html.push(`<tr><td colspan="6" style="border: 1px solid #000; padding: 6px 8px;">${escaped}</td></tr>`);
+        }
+      });
+
+      html.push("</table>");
+      tableRows = [];
+      inTable = false;
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const escaped = trimmed.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    // Deteksi Formulir Baru (Pembuat Halaman Baru / Page Break)
+    if (trimmed.startsWith("Formulir 1") || trimmed.startsWith("Formulir 2") || trimmed.startsWith("Formulir 3")) {
+      flushTable();
+      html.push('<div style="page-break-before: always; margin-top: 20pt;"></div>');
+      html.push(`<h2 style="font-size: 12pt; font-weight: bold; text-align: center; margin-top: 15pt; margin-bottom: 5pt; font-family: 'Times New Roman', serif; text-transform: uppercase;">${escaped}</h2>`);
+      continue;
+    }
+
+    // Deteksi Judul Utama Berita Acara
+    if (
+      trimmed.includes("BERITA ACARA") ||
+      trimmed.includes("HASIL VERIFIKASI RANCANGAN") ||
+      trimmed.includes("RENCANA KERJA (RENJA)") ||
+      trimmed.includes("KABUPATEN CIREBON TAHUN")
+    ) {
+      flushTable();
+      html.push(`<h1 style="font-size: 13pt; font-weight: bold; text-align: center; margin-top: 6pt; margin-bottom: 6pt; font-family: 'Times New Roman', serif;">${escaped}</h1>`);
+      continue;
+    }
+
+    // Deteksi Diktum (Kesatu, Kedua, Ketiga, Keempat)
+    if (/^(Kesatu|Kedua|Ketiga|Keempat)\s*:/i.test(trimmed)) {
+      flushTable();
+      const parts = trimmed.split(":");
+      const key = parts[0].trim();
+      const val = parts.slice(1).join(":").trim();
+      html.push(`<p style="margin-left: 20pt; text-indent: -20pt; margin-bottom: 6pt; font-size: 11pt; text-align: justify; font-family: 'Times New Roman', serif;"><strong>${key} :</strong> ${val}</p>`);
+      continue;
+    }
+
+    // Deteksi Tanda Tangan Side-by-Side (VERIFIKATOR & KEPALA Perangkat Daerah)
+    if (trimmed.includes("VERIFIKATOR") || trimmed.includes("KEPALA Perangkat") || trimmed.includes("BAPPELITBANGDA")) {
+      flushTable();
+      html.push(`<table style="width: 100%; border: none; margin-top: 25pt; margin-bottom: 25pt;" border="0">
+        <tr>
+          <td style="width: 50%; border: none; text-align: left; vertical-align: top; font-size: 11pt; font-family: 'Times New Roman', serif;">
+            <strong>VERIFIKATOR,</strong><br>
+            A.n Kepala BAPPELITBANGDA<br>
+            Kabid ………………………….<br><br><br><br><br>
+            (……………………………….)
+          </td>
+          <td style="width: 50%; border: none; text-align: left; vertical-align: top; font-size: 11pt; font-family: 'Times New Roman', serif;">
+            A.n. KEPALA Perangkat Daerah /<br>
+            Ketua Tim Penyusun<br><br><br><br><br><br>
+            (……………………………….)
+          </td>
+        </tr>
+      </table>`);
+      // Lewati baris TTD jika sudah diproses
+      while (
+        i + 1 < lines.length &&
+        (lines[i + 1].includes("BAPPELITBANGDA") || lines[i + 1].includes("……") || lines[i + 1].includes("("))
       ) {
-        return `<h2 style="font-size: 13pt; font-weight: bold; margin-top: 14pt; margin-bottom: 6pt; color: #111;">${escaped}</h2>`;
+        i++;
       }
-      return `<p style="font-size: 11pt; line-height: 1.5; margin-bottom: 6pt; color: #222;">${escaped}</p>`;
-    })
-    .filter(Boolean)
-    .join("\n");
+      continue;
+    }
 
-  const cleanHtmlContent = `<!DOCTYPE html>
+    // Deteksi Tabel (No, Jenis Kegiatan, (1), (2), dsb)
+    if (
+      trimmed.startsWith("No") ||
+      trimmed.includes("(1)") ||
+      trimmed.includes("Jenis Kegiatan") ||
+      trimmed.includes("Sistematika") ||
+      inTable
+    ) {
+      if (trimmed.startsWith("No") || trimmed.includes("Jenis Kegiatan") || trimmed.includes("Sistematika")) {
+        inTable = true;
+      }
+      if (inTable) {
+        tableRows.push(line);
+        continue;
+      }
+    }
+
+    // Paragraf biasa
+    html.push(`<p style="font-size: 11pt; line-height: 1.5; margin-bottom: 6pt; text-align: justify; font-family: 'Times New Roman', serif;">${escaped}</p>`);
+  }
+
+  flushTable();
+
+  return `<!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="utf-8">
   <title>${baseName}</title>
   <style>
-    @page { size: A4; margin: 2cm; }
-    body { font-family: "Arial", "Calibri", sans-serif; font-size: 11pt; line-height: 1.5; color: #111111; }
-    h1, h2, h3 { color: #000000; font-weight: bold; }
-    p { margin-bottom: 8px; word-wrap: break-word; }
+    @page { size: A4; margin: 2.54cm; }
+    body { font-family: "Times New Roman", "Calibri", serif; font-size: 11pt; line-height: 1.5; color: #000; background: #fff; }
+    h1, h2, h3 { font-family: "Times New Roman", serif; font-weight: bold; color: #000; }
+    p { margin-bottom: 6pt; text-align: justify; word-wrap: break-word; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10pt; margin-bottom: 15pt; page-break-inside: avoid; }
+    td, th { border: 1px solid #000000; padding: 6px 8px; vertical-align: top; font-size: 10pt; }
+    th { background-color: #f2f2f2; font-weight: bold; text-align: center; }
   </style>
 </head>
 <body>
-  ${formattedParagraphs || "<p>Tidak ada konten teks yang ditemukan dalam PDF.</p>"}
+  ${html.join("\n")}
 </body>
 </html>`;
+}
+
+/**
+ * Konversi PDF -> DOCX bersih tanpa frame/text-box bertumpuk.
+ * Mengalirkan teks paragraf demi paragraf sehingga dokumen Word rapi dan mudah dibaca.
+ */
+async function convertPdfToDocxClean(inputPath, buffer, outputPath, baseName, tmpDir, bin) {
+  let extractedText = "";
+
+  // 1. Coba ekstraksi teks dengan pdftotext -layout (menjaga kolom & struktur baris)
+  if (bin.pdftotext) {
+    const txtPath = path.join(tmpDir, `${baseName}_layout.txt`);
+    try {
+      await execAsync(`${bin.pdftotext} -layout "${inputPath}" "${txtPath}"`, { timeout: 30_000 });
+      if (existsSync(txtPath)) {
+        extractedText = await readFile(txtPath, "utf-8");
+      }
+    } catch (e) {
+      console.log("pdftotext -layout failed:", e);
+    }
+  }
+
+  // 2. Fallback ekstraksi teks dengan pdfjs-dist jika pdftotext tidak menghasilkan apa-apa
+  if (!extractedText.trim()) {
+    const pages = await extractPdfPagesText(buffer);
+    extractedText = pages.join("\n\n--- Halaman Baru ---\n\n");
+  }
+
+  // 3. Jika dokumen berupa hasil scan (tidak ada teks terdeteksi), jalankan OCR (pdftoppm + tesseract)
+  if (!extractedText.trim() || extractedText.trim().length < 30) {
+    if (bin.pdftoppm && bin.tesseract) {
+      try {
+        const ocrTxtPath = await ocrPdf(inputPath, tmpDir, bin);
+        if (existsSync(ocrTxtPath)) {
+          extractedText = await readFile(ocrTxtPath, "utf-8");
+        }
+      } catch (e) {
+        console.error("OCR pipeline failed:", e);
+      }
+    }
+  }
+
+  // 4. Susun teks menjadi dokumen HTML resmi mengalir yang presisi
+  const cleanHtmlContent = parsePdfTextToOfficialHtml(extractedText, baseName);
 
   const tmpHtmlPath = path.join(tmpDir, `${baseName}_clean.html`);
   await writeFile(tmpHtmlPath, cleanHtmlContent, "utf-8");
