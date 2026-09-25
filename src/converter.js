@@ -246,6 +246,122 @@ async function convertHtmlToPdfJS(buffer, outputPath) {
   await textToPdf(lines, outputPath);
 }
 
+/**
+ * Konversi PDF -> DOCX bersih tanpa frame/text-box bertumpuk.
+ * Mengalirkan teks paragraf demi paragraf sehingga dokumen Word rapi dan mudah dibaca.
+ */
+async function convertPdfToDocxClean(inputPath, buffer, outputPath, baseName, tmpDir, bin) {
+  let extractedText = "";
+
+  // 1. Coba ekstraksi teks dengan pdftotext -layout (menjaga kolom & struktur baris)
+  if (bin.pdftotext) {
+    const txtPath = path.join(tmpDir, `${baseName}_layout.txt`);
+    try {
+      await execAsync(`${bin.pdftotext} -layout "${inputPath}" "${txtPath}"`, { timeout: 30_000 });
+      if (existsSync(txtPath)) {
+        extractedText = await readFile(txtPath, "utf-8");
+      }
+    } catch (e) {
+      console.log("pdftotext -layout failed:", e);
+    }
+  }
+
+  // 2. Fallback ekstraksi teks dengan pdfjs-dist jika pdftotext tidak menghasilkan apa-apa
+  if (!extractedText.trim()) {
+    const pages = await extractPdfPagesText(buffer);
+    extractedText = pages.join("\n\n--- Halaman Baru ---\n\n");
+  }
+
+  // 3. Jika dokumen berupa hasil scan (tidak ada teks terdeteksi), jalankan OCR (pdftoppm + tesseract)
+  if (!extractedText.trim() || extractedText.trim().length < 30) {
+    if (bin.pdftoppm && bin.tesseract) {
+      try {
+        const ocrTxtPath = await ocrPdf(inputPath, tmpDir, bin);
+        if (existsSync(ocrTxtPath)) {
+          extractedText = await readFile(ocrTxtPath, "utf-8");
+        }
+      } catch (e) {
+        console.error("OCR pipeline failed:", e);
+      }
+    }
+  }
+
+  // 4. Susun teks menjadi dokumen HTML mengalir yang rapi tanpa frame/box bertumpuk
+  const lines = extractedText.split(/\r?\n/);
+  const formattedParagraphs = lines
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return "";
+      const escaped = trimmed
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+
+      if (
+        trimmed.length < 90 &&
+        (trimmed.toUpperCase() === trimmed ||
+          trimmed.startsWith("BAB ") ||
+          trimmed.includes("BERITA ACARA") ||
+          trimmed.includes("HASIL VERIFIKASI"))
+      ) {
+        return `<h2 style="font-size: 13pt; font-weight: bold; margin-top: 14pt; margin-bottom: 6pt; color: #111;">${escaped}</h2>`;
+      }
+      return `<p style="font-size: 11pt; line-height: 1.5; margin-bottom: 6pt; color: #222;">${escaped}</p>`;
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  const cleanHtmlContent = `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <title>${baseName}</title>
+  <style>
+    @page { size: A4; margin: 2cm; }
+    body { font-family: "Arial", "Calibri", sans-serif; font-size: 11pt; line-height: 1.5; color: #111111; }
+    h1, h2, h3 { color: #000000; font-weight: bold; }
+    p { margin-bottom: 8px; word-wrap: break-word; }
+  </style>
+</head>
+<body>
+  ${formattedParagraphs || "<p>Tidak ada konten teks yang ditemukan dalam PDF.</p>"}
+</body>
+</html>`;
+
+  const tmpHtmlPath = path.join(tmpDir, `${baseName}_clean.html`);
+  await writeFile(tmpHtmlPath, cleanHtmlContent, "utf-8");
+
+  // 5. Konversikan HTML mengalir tersebut ke DOCX menggunakan LibreOffice / Pandoc
+  if (bin.libreoffice) {
+    try {
+      await execAsync(
+        `${bin.libreoffice} --headless --convert-to docx:writer_docx_Export "${tmpHtmlPath}" --outdir "${tmpDir}"`,
+        { timeout: 60_000 }
+      );
+      const generatedDocx = path.join(tmpDir, `${baseName}_clean.docx`);
+      if (existsSync(generatedDocx)) {
+        await rename(generatedDocx, outputPath);
+        return;
+      }
+    } catch (e) {
+      console.error("LibreOffice HTML -> DOCX conversion failed:", e);
+    }
+  }
+
+  if (bin.pandoc && !existsSync(outputPath)) {
+    try {
+      await execAsync(`${bin.pandoc} "${tmpHtmlPath}" -o "${outputPath}"`, { timeout: 60_000 });
+      return;
+    } catch (e) {
+      console.error("Pandoc HTML -> DOCX failed:", e);
+    }
+  }
+
+  if (!existsSync(outputPath)) {
+    await writeFile(outputPath, cleanHtmlContent, "utf-8");
+  }
+}
+
 /* ===================================================================
    Konversi inti — satu file
    =================================================================== */
@@ -262,45 +378,7 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
 
   if (from === "pdf") {
     if (to === "docx") {
-      // 1. Coba LibreOffice (solusi terbaik untuk PDF ke DOCX)
-      if (bin.libreoffice) {
-        try {
-          await execAsync(
-            `${bin.libreoffice} --headless --infilter="writer_pdf_import" --convert-to docx "${inputPath}" --outdir "${tmpDir}"`,
-            { timeout: 60_000 }
-          );
-        } catch (e) {
-          console.error("LibreOffice PDF -> DOCX failed:", e);
-        }
-      }
-
-      // 2. Jika LibreOffice gagal/tidak ada, coba OCR jika PDF berbasis gambar tanpa teks
-      if (!existsSync(outputPath)) {
-        const hasText = await pdfHasText(buffer);
-        if (!hasText && bin.pdftoppm && bin.tesseract && bin.pandoc) {
-          try {
-            const ocrTxt = await ocrPdf(inputPath, tmpDir, bin);
-            await execAsync(`${bin.pandoc} "${ocrTxt}" -o "${outputPath}"`, { timeout: 60_000 });
-          } catch (e) {
-            console.error("OCR pipeline failed:", e);
-          }
-        }
-      }
-
-      // 3. Fallback murni JS: ekstrak teks dari PDF -> simpan sebagai dokumen
-      if (!existsSync(outputPath)) {
-        const pages = await extractPdfPagesText(buffer);
-        const htmlDoc =
-          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${baseName}</title><style>body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }</style></head><body>` +
-          pages
-            .map(
-              (p, i) =>
-                `<h2>Halaman ${i + 1}</h2><p>${p.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")}</p>`
-            )
-            .join("\n") +
-          `</body></html>`;
-        await writeFile(outputPath, htmlDoc, "utf-8");
-      }
+      await convertPdfToDocxClean(inputPath, buffer, outputPath, baseName, tmpDir, bin);
     } else if (to === "html") {
       if (bin.libreoffice) {
         try {

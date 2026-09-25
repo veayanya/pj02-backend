@@ -57,5 +57,11 @@ export function getBinaries() {
       path.join(programFiles, "poppler", "Library", "bin", "pdftoppm.exe"),
       path.join(localAppData, "poppler", "bin", "pdftoppm.exe"),
     ]),
+    pdftotext: findBinary("pdftotext", [
+      path.join(cwd, "bin", "pdftotext.exe"),
+      path.join(programFiles, "poppler", "bin", "pdftotext.exe"),
+      path.join(programFiles, "poppler", "Library", "bin", "pdftotext.exe"),
+      path.join(localAppData, "poppler", "bin", "pdftotext.exe"),
+    ]),
   };
 }
