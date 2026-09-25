@@ -55,7 +55,8 @@ export function parseMode(mode) {
 
 async function extractPdfPagesText(buffer) {
   try {
-    const pdf = await pdfjs.getDocument({ data: buffer }).promise;
+    const data = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const pdf = await pdfjs.getDocument({ data }).promise;
     const pages = [];
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
@@ -64,7 +65,8 @@ async function extractPdfPagesText(buffer) {
       pages.push(text);
     }
     return pages;
-  } catch {
+  } catch (err) {
+    console.error("extractPdfPagesText error:", err);
     return [];
   }
 }
@@ -260,16 +262,22 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
 
   if (from === "pdf") {
     if (to === "docx") {
-      const hasText = await pdfHasText(buffer);
+      // 1. Coba LibreOffice (solusi terbaik untuk PDF ke DOCX)
+      if (bin.libreoffice) {
+        try {
+          await execAsync(
+            `${bin.libreoffice} --headless --infilter="writer_pdf_import" --convert-to docx "${inputPath}" --outdir "${tmpDir}"`,
+            { timeout: 60_000 }
+          );
+        } catch (e) {
+          console.error("LibreOffice PDF -> DOCX failed:", e);
+        }
+      }
 
-      if (bin.pandoc) {
-        if (hasText) {
-          try {
-            await execAsync(`${bin.pandoc} "${inputPath}" -o "${outputPath}"`, { timeout: 60_000 });
-          } catch {
-            console.log("Pandoc failed — falling back to LibreOffice/JS");
-          }
-        } else if (bin.pdftoppm && bin.tesseract) {
+      // 2. Jika LibreOffice gagal/tidak ada, coba OCR jika PDF berbasis gambar tanpa teks
+      if (!existsSync(outputPath)) {
+        const hasText = await pdfHasText(buffer);
+        if (!hasText && bin.pdftoppm && bin.tesseract && bin.pandoc) {
           try {
             const ocrTxt = await ocrPdf(inputPath, tmpDir, bin);
             await execAsync(`${bin.pandoc} "${ocrTxt}" -o "${outputPath}"`, { timeout: 60_000 });
@@ -279,25 +287,15 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
         }
       }
 
-      if (!existsSync(outputPath) && bin.libreoffice) {
-        try {
-          await execAsync(
-            `${bin.libreoffice} --headless --infilter="writer_pdf_import" --convert-to docx:writer_docx_Export "${inputPath}" --outdir "${tmpDir}"`,
-            { timeout: 60_000 }
-          );
-        } catch (e) {
-          console.error("LibreOffice PDF conversion failed:", e);
-        }
-      }
-
+      // 3. Fallback murni JS: ekstrak teks dari PDF -> simpan sebagai dokumen
       if (!existsSync(outputPath)) {
         const pages = await extractPdfPagesText(buffer);
         const htmlDoc =
-          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${baseName}</title></head><body>` +
+          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${baseName}</title><style>body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }</style></head><body>` +
           pages
             .map(
               (p, i) =>
-                `<h2>Page ${i + 1}</h2><p>${p.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")}</p>`
+                `<h2>Halaman ${i + 1}</h2><p>${p.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")}</p>`
             )
             .join("\n") +
           `</body></html>`;
