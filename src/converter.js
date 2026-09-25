@@ -281,7 +281,7 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
       if (!existsSync(outputPath) && bin.libreoffice) {
         try {
           await execAsync(
-            `${bin.libreoffice} --headless --infilter="writer_pdf_import" --convert-to docx "${inputPath}" --outdir "${tmpDir}"`,
+            `${bin.libreoffice} --headless --infilter="writer_pdf_import" --convert-to docx:writer_docx_Export "${inputPath}" --outdir "${tmpDir}"`,
             { timeout: 60_000 }
           );
         } catch (e) {
@@ -335,7 +335,7 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
     if (to === "pdf") {
       if (bin.libreoffice) {
         try {
-          await execAsync(`${bin.libreoffice} --headless --convert-to pdf "${inputPath}" --outdir "${tmpDir}"`, {
+          await execAsync(`${bin.libreoffice} --headless --convert-to pdf:writer_pdf_Export "${inputPath}" --outdir "${tmpDir}"`, {
             timeout: 60_000,
           });
         } catch (e) {
@@ -375,7 +375,7 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
       if (!bin.libreoffice) {
         throw new Error("LibreOffice diperlukan untuk konversi PPTX → PDF. Silakan pasang LibreOffice (https://www.libreoffice.org).");
       }
-      await execAsync(`${bin.libreoffice} --headless --convert-to pdf "${inputPath}" --outdir "${tmpDir}"`, {
+      await execAsync(`${bin.libreoffice} --headless --convert-to pdf:impress_pdf_Export "${inputPath}" --outdir "${tmpDir}"`, {
         timeout: 60_000,
       });
     } else if (to === "html") {
@@ -423,7 +423,7 @@ export async function convertFile(inputPath, buffer, originalName, from, to, tmp
       }
       const tmpDocx = path.join(tmpDir, `${baseName}_tmp.docx`);
       await execAsync(`${bin.pandoc} "${inputPath}" -o "${tmpDocx}"`, { timeout: 60_000 });
-      await execAsync(`${bin.libreoffice} --headless --convert-to pdf "${tmpDocx}" --outdir "${tmpDir}"`, {
+      await execAsync(`${bin.libreoffice} --headless --convert-to pdf:writer_pdf_Export "${tmpDocx}" --outdir "${tmpDir}"`, {
         timeout: 60_000,
       });
       const loOut = path.join(tmpDir, `${baseName}_tmp.pdf`);
