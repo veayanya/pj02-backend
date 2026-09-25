@@ -249,8 +249,9 @@ async function convertHtmlToPdfJS(buffer, outputPath) {
    =================================================================== */
 
 export async function convertFile(inputPath, buffer, originalName, from, to, tmpDir) {
-  const baseName = path.basename(originalName, `.${from}`);
-  const outputName = `${baseName}.${to}`;
+  const lastDotIndex = originalName.lastIndexOf(".");
+  const baseName = lastDotIndex > 0 ? originalName.substring(0, lastDotIndex) : originalName;
+  const outputName = `${baseName}.${to.toLowerCase()}`;
   const outputPath = path.join(tmpDir, outputName);
   const mimeType = MIME[to] ?? "application/octet-stream";
   const bin = getBinaries();

@@ -153,9 +153,11 @@ app.get("/api/convert", (req, res) => {
   }
 
   // status === "done" — kirim file hasil konversi
+  const safeFilename = job.filename.replace(/"/g, '\\"');
+  const encodedFilename = encodeURIComponent(job.filename);
   res.set({
     "Content-Type": job.mimeType,
-    "Content-Disposition": `attachment; filename="${job.filename}"`,
+    "Content-Disposition": `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`,
     "Content-Length": job.result.length,
   });
   res.status(200).send(job.result);
