@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: konversin-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: FRONTEND_ORIGIN
+        sync: false # set to your Vercel URL, e.g. https://konversin.vercel.app
+    healthCheckPath: /api/health
