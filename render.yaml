@@ -1,10 +1,16 @@
 services:
   - type: web
-    name: konversin-backend
-    runtime: docker
-    dockerfilePath: ./Dockerfile
+    name: ilovepdf-clone-backend
+    runtime: node
     plan: free
+    buildCommand: npm install
+    startCommand: npm start
     envVars:
-      - key: FRONTEND_ORIGIN
-        sync: false # set to your Vercel URL, e.g. https://konversin.vercel.app
-    healthCheckPath: /api/health
+      - key: ILOVEPDF_PUBLIC_KEY
+        sync: false
+      - key: ILOVEPDF_SECRET_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: MAX_FILE_SIZE_MB
+        value: "50"

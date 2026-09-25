@@ -1,46 +1,66 @@
-# Konversin Backend
+# iLovePDF Clone — Backend (Node.js + Express)
 
-API konversi dokumen (PDF, DOCX, PPTX, HTML, EPUB) untuk Konversin. Dibangun dengan
-Express + Node.js, menjalankan LibreOffice, Pandoc, dan Tesseract OCR di server.
+Backend ini membungkus alur resmi iLovePDF API (auth JWT lokal → start → upload →
+process → download) lewat satu endpoint generik, dipakai oleh frontend Vue.js
+yang ada di repo terpisah.
 
-Ini adalah hasil pemisahan `app/api/*` dari proyek Next.js "Personal Doc Converter"
-menjadi backend berdiri sendiri, supaya bisa di-deploy ke **Render** (yang mendukung
-Docker + binary native), sementara frontend-nya (Vite+React) di-deploy ke **Vercel**.
+Deploy target: **Render**.
+
+## 1. Dapatkan API key iLovePDF
+
+Daftar gratis di https://developer.ilovepdf.com lalu buat project untuk mendapatkan
+**public key** & **secret key**.
+
+## 2. Jalankan lokal
+
+```bash
+cp .env.example .env
+# isi ILOVEPDF_PUBLIC_KEY & ILOVEPDF_SECRET_KEY di .env
+npm install
+npm run dev
+# jalan di http://localhost:4000
+```
+
+## 3. Deploy ke Render
+
+1. Push repo ini ke Git (GitHub/GitLab/dst).
+2. Di Render: **New → Web Service**, hubungkan repo ini.
+3. Build command: `npm install` — Start command: `npm start`.
+4. Set environment variables di dashboard Render:
+   - `ILOVEPDF_PUBLIC_KEY`
+   - `ILOVEPDF_SECRET_KEY`
+   - `CORS_ORIGIN` → domain frontend Vercel kamu, mis. `https://ilovepdf-clone.vercel.app`
+     (boleh lebih dari satu domain, pisahkan dengan koma)
+   - `MAX_FILE_SIZE_MB` (opsional, default 50)
+5. Atau pakai `render.yaml` yang sudah disediakan lewat fitur **Render Blueprint**.
+6. Setelah deploy, catat URL backend (mis. `https://ilovepdf-clone-backend.onrender.com`)
+   — URL ini yang diisi ke `VITE_API_URL` di repo frontend.
+
+## Struktur
+
+```
+src/
+  config/tools.js            daftar 24 tool + tipe input (file/url) + accept extension
+  services/ilovepdfClient.js inti: JWT lokal, start, upload, process, download
+  routes/pdf.js               endpoint POST /api/pdf/:tool
+  server.js                   entry point Express
+render.yaml
+```
 
 ## Endpoint
 
-| Method | Path                  | Keterangan                                      |
-|--------|-----------------------|--------------------------------------------------|
-| GET    | `/api/health`         | Cek server hidup — dipakai frontend untuk badge  |
-| GET    | `/api/system`         | Info tool yang terpasang (LibreOffice/Pandoc/dll)|
-| POST   | `/api/convert`        | Upload file(s) + `mode`, balas `{ jobIds }`      |
-| GET    | `/api/convert?id=...` | Poll status job / stream file hasil konversi     |
+- `GET /api/health` — cek server hidup
+- `GET /api/tools` — daftar tool yang didukung
+- `POST /api/pdf/:tool` — jalankan satu tool (multipart/form-data: `files`,
+  `sourceUrl` opsional, `options` JSON string opsional)
 
-Mode yang didukung: `pdf-to-docx`, `pdf-to-html`, `pdf-to-epub`, `docx-to-pdf`,
-`docx-to-html`, `docx-to-epub`, `pptx-to-pdf`, `pptx-to-html`, `html-to-pdf`,
-`html-to-docx`, `epub-to-pdf`, `epub-to-docx`.
+## Catatan
 
-## Jalankan lokal
-
-```bash
-npm install
-npm run dev
-```
-
-Butuh LibreOffice/Pandoc/Tesseract/Poppler terpasang di mesin lokal supaya semua
-mode jalan optimal — kalau tidak ada, sebagian mode otomatis fallback ke mesin JS
-murni (mammoth/pdf-lib/pdfjs-dist), tapi hasilnya lebih sederhana (teks saja).
-
-## Deploy ke Render
-
-1. Push folder ini ke repo GitHub sendiri (terpisah dari frontend).
-2. Di Render: **New → Web Service → Build from a Dockerfile** (repo ini sudah
-   punya `Dockerfile` yang meng-install LibreOffice + Pandoc + Tesseract + Poppler
-   via apt), atau langsung **Deploy from render.yaml (Blueprint)**.
-3. Set environment variable `FRONTEND_ORIGIN` ke URL frontend Vercel kamu, misalnya
-   `https://konversin.vercel.app` (boleh beberapa origin dipisah koma).
-4. Setelah deploy selesai, catat URL backend (mis. `https://konversin-backend.onrender.com`)
-   — ini yang dipakai sebagai `VITE_API_URL` di frontend.
-
-Free plan Render akan sleep saat idle, jadi request pertama setelah lama tidak
-dipakai bisa terasa lambat (cold start) — ini wajar.
+- Tool `validatepdfa`, `extract`, `formsdetect`, `sign` bisa mengembalikan **JSON**
+  (bukan file) — backend otomatis mendeteksi ini dari response iLovePDF.
+- `editpdf` & `sign` butuh struktur data kompleks (`elements`/`signers`) sesuai
+  [dokumentasi iLovePDF](https://developer.ilovepdf.com/docs) — diteruskan apa adanya
+  dari field `options`.
+- Ukuran file dibatasi `MAX_FILE_SIZE_MB` (default 50 MB).
+- Render plan gratis bisa "tidur" saat idle → request pertama setelah lama nganggur
+  akan terasa lambat (cold start).

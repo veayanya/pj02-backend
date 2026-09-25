@@ -247,45 +247,6 @@ async function convertHtmlToPdfJS(buffer, outputPath) {
 }
 
 /**
- * Konversi PDF -> DOCX bersih tanpa frame/text-box bertumpuk.
- * Mengalirkan teks paragraf demi paragraf sehingga dokumen Word rapi dan mudah dibaca.
- */
-async function convertPdfToDocxClean(inputPath, buffer, outputPath, baseName, tmpDir, bin) {
-  let extractedText = "";
-
-  // 1. Coba ekstraksi teks dengan pdftotext -layout (menjaga kolom & struktur baris)
-  if (bin.pdftotext) {
-    const txtPath = path.join(tmpDir, `${baseName}_layout.txt`);
-    try {
-      await execAsync(`${bin.pdftotext} -layout "${inputPath}" "${txtPath}"`, { timeout: 30_000 });
-      if (existsSync(txtPath)) {
-        extractedText = await readFile(txtPath, "utf-8");
-      }
-    } catch (e) {
-      console.log("pdftotext -layout failed:", e);
-    }
-  }
-
-  // 2. Fallback ekstraksi teks dengan pdfjs-dist jika pdftotext tidak menghasilkan apa-apa
-  if (!extractedText.trim()) {
-    const pages = await extractPdfPagesText(buffer);
-    extractedText = pages.join("\n\n--- Halaman Baru ---\n\n");
-  }
-
-  // 3. Jika dokumen berupa hasil scan (tidak ada teks terdeteksi), jalankan OCR (pdftoppm + tesseract)
-  if (!extractedText.trim() || extractedText.trim().length < 30) {
-    if (bin.pdftoppm && bin.tesseract) {
-      try {
-        const ocrTxtPath = await ocrPdf(inputPath, tmpDir, bin);
-        if (existsSync(ocrTxtPath)) {
-          extractedText = await readFile(ocrTxtPath, "utf-8");
-        }
-      } catch (e) {
-        console.error("OCR pipeline failed:", e);
-      }
-    }
-  }
-
 /**
  * Rekonstruksi struktur dokumen resmi (Berita Acara, Formulir 1/2/3, Tabel, & Tanda Tangan)
  * menjadi HTML mengalir dengan presisi tinggi untuk dikompilasi ke dokumen Native Word (.docx).
@@ -299,8 +260,6 @@ function parsePdfTextToOfficialHtml(extractedText, baseName) {
   const flushTable = () => {
     if (tableRows.length > 0) {
       html.push('<table style="width: 100%; border-collapse: collapse; margin-top: 10pt; margin-bottom: 15pt;" border="1">');
-
-      let isForm1 = tableRows.some((r) => r.includes("(1)") && r.includes("(6)"));
 
       tableRows.forEach((row, idx) => {
         const trimmed = row.trim();
