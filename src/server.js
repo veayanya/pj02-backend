@@ -6,14 +6,45 @@ import pdfRouter from "./routes/pdf.js";
 const app = express();
 const port = process.env.PORT || 4000;
 
-const allowedOrigins = (process.env.CORS_ORIGIN || "*")
+// CORS_ORIGIN bisa berisi beberapa origin dipisah koma, dan boleh pakai "*"
+// sebagai wildcard di dalam satu origin (mis. "https://myapp-*.vercel.app")
+// supaya semua URL preview deployment Vercel (yang hash-nya berubah tiap
+// deploy) tetap diizinkan tanpa perlu update env variable setiap saat.
+const rawOrigins = (process.env.CORS_ORIGIN || "*")
   .split(",")
   .map((o) => o.trim())
   .filter(Boolean);
 
+const allowAll = rawOrigins.includes("*");
+
+function wildcardToRegExp(pattern) {
+  const escaped = pattern
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&") // escape karakter regex selain '*'
+    .replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}$`);
+}
+
+const originMatchers = rawOrigins
+  .filter((o) => o !== "*")
+  .map((pattern) => (pattern.includes("*") ? wildcardToRegExp(pattern) : pattern));
+
+function isOriginAllowed(origin) {
+  if (allowAll) return true;
+  if (!origin) return true; // request tanpa header Origin (mis. curl, server-to-server)
+  return originMatchers.some((matcher) =>
+    matcher instanceof RegExp ? matcher.test(origin) : matcher === origin
+  );
+}
+
 app.use(
   cors({
-    origin: allowedOrigins.includes("*") ? true : allowedOrigins,
+    origin(origin, callback) {
+      if (isOriginAllowed(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`Origin "${origin}" tidak diizinkan oleh CORS_ORIGIN.`));
+      }
+    },
   })
 );
 app.use(express.json());
