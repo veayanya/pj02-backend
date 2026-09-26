@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ilovepdf-clone-backend
+    name: konversin-backend
     runtime: node
     plan: free
     buildCommand: npm install

@@ -1,7 +1,7 @@
 {
   "name": "konversin-backend",
   "version": "1.0.0",
-  "description": "Backend Express untuk Konversin — konversi dokumen menggunakan LibreOffice, Pandoc, dan pdf-lib.",
+  "description": "Backend Express untuk Konversin (auth JWT, start, upload, process, download) yang memproses PDF untuk dipakai frontend Vue.js.",
   "type": "module",
   "main": "src/server.js",
   "engines": {
@@ -15,9 +15,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "multer": "^2.0.0",
-    "mammoth": "^1.8.0",
-    "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "^4.0.379"
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.0"
   }
 }
