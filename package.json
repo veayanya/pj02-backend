@@ -1,7 +1,7 @@
 {
-  "name": "ilovepdf-clone-backend",
+  "name": "konversin-backend",
   "version": "1.0.0",
-  "description": "Backend Express yang membungkus iLovePDF API (auth JWT, start, upload, process, download) untuk dipakai frontend Vue.js.",
+  "description": "Backend Express untuk Konversin — konversi dokumen menggunakan LibreOffice, Pandoc, dan pdf-lib.",
   "type": "module",
   "main": "src/server.js",
   "engines": {
@@ -15,7 +15,9 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "jsonwebtoken": "^9.0.2",
-    "multer": "^2.0.0"
+    "multer": "^2.0.0",
+    "mammoth": "^1.8.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.0.379"
   }
 }
